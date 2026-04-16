@@ -41,12 +41,12 @@ if (!$phone || !$tg_username || !$question) {
 $tg_username = ltrim($tg_username, '@');
 
 $token = "8517119171:AAHibMpoU5NPMRgOCkH9holkHIs0oZwMats";
-$chat_id = "6769371325";
+$chat_id = "1089091335";
 
 $message = "📩 Новый вопрос с сайта PickMeNails\n";
-$message .= "📱 Телефон: $phone\n";
-$message .= "✈️ Telegram: @$tg_username\n";
-$message .= "💬 Вопрос: $question";
+$message .= "Телефон: $phone\n";
+$message .= "Telegram: @$tg_username\n";
+$message .= "Вопрос: $question";
 
 $url = "https://api.telegram.org/bot$token/sendMessage";
 
