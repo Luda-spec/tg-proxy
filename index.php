@@ -1,3 +1,3 @@
 <?php
-echo "🚀 Proxy server is running!";
+echo "Proxy server is running!";
 ?>
