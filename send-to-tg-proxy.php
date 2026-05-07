@@ -1,11 +1,25 @@
+
 <?php
 
-$bot_token = "8517119171:AAHibMpoU5NPMRgOCkH9holkHIs0oZwMats";
-$admin_chat_id = "1089091335";  // Ваш личный Chat ID
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
+header('Content-Type: application/json');
+
+// ======================================
+// НАСТРОЙКИ
+// ======================================
+
+$bot_token = 'NEW_BOT_TOKEN';
+$admin_chat_id = '1089091335';
 $allowed_origin = 'https://manicure.ct.ws';
 
+// ======================================
+// CORS
+// ======================================
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+
 if ($origin === $allowed_origin) {
     header("Access-Control-Allow-Origin: $allowed_origin");
     header('Access-Control-Allow-Methods: POST, OPTIONS');
@@ -17,309 +31,342 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-$db_file = __DIR__ . '/subscribers.db';
-try {
-    $db = new PDO('sqlite:' . $db_file);
-    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    
-    $db->exec("CREATE TABLE IF NOT EXISTS subscribers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id TEXT UNIQUE NOT NULL,
-        username TEXT,
-        first_name TEXT,
-        subscribed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )");
-} catch (PDOException $e) {
-    error_log('DB Error: ' . $e->getMessage());
-}
-
-$input = json_decode(file_get_contents('php://input'), true);
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($input['name']) && isset($input['text'])) {
-    handleSiteNotification($input, $bot_token, $admin_chat_id);
-    exit;
-}
-
-if (isset($input['message']) || isset($input['callback_query'])) {
-    handleTelegramWebhook($input, $bot_token, $admin_chat_id, $db);
-    exit;
-}
+// ======================================
+// HEALTH CHECK
+// ======================================
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    header('Content-Type: application/json');
-    echo json_encode(['status' => 'ok', 'time' => date('Y-m-d H:i:s')]);
+
+    echo json_encode([
+        'status' => 'ok',
+        'time' => date('Y-m-d H:i:s')
+    ]);
+
     exit;
 }
 
-http_response_code(400);
-echo json_encode(['status' => 'error', 'message' => 'Invalid request']);
+// ======================================
+// ЧИТАЕМ ВХОДЯЩИЙ JSON
+// ======================================
 
+$raw = file_get_contents('php://input');
 
-function handleSiteNotification($input, $token, $chat_id) {
-    header('Content-Type: application/json');
-    
-    if (isset($input['name']) && isset($input['text']) && isset($input['rating'])) {
-        $name = htmlspecialchars($input['name']);
-        $rating = intval($input['rating']);
-        $text = htmlspecialchars($input['text']);
-        $admin_url = htmlspecialchars($input['admin_url'] ?? '');
-        
-        $stars = str_repeat('★', $rating) . str_repeat('☆', 5 - $rating);
-        
-        $message = "📝 <b>Новый отзыв на сайте!</b>\n\n";
-        $message .= "👤 <b>Имя:</b> $name\n";
-        $message .= "⭐ <b>Оценка:</b> $rating/5 $stars\n";
-        $message .= "💬 <b>Текст:</b>\n$text\n\n";
-        $message .= "🔗 <a href=\"$admin_url\">Проверить в админке</a>";
-        
-        sendTelegramMessage($token, $chat_id, $message);
-        echo json_encode(['status' => 'success']);
-        exit;
-    }
-    
-    if (isset($input['phone']) && isset($input['question'])) {
-        $phone = htmlspecialchars($input['phone']);
-        $tg = htmlspecialchars(ltrim($input['tg_username'] ?? '', '@'));
-        $question = htmlspecialchars($input['question']);
-        
-        $message = "📩 <b>Новый вопрос с сайта!</b>\n\n";
-        $message .= "📞 <b>Телефон:</b> $phone\n";
-        $message .= "✈️ <b>Telegram:</b> @$tg\n";
-        $message .= "❓ <b>Вопрос:</b>\n$question";
-        
-        sendTelegramMessage($token, $chat_id, $message);
-        echo json_encode(['status' => 'success']);
-        exit;
-    }
-    
+file_put_contents(
+    __DIR__ . '/debug.log',
+    date('Y-m-d H:i:s') . PHP_EOL .
+    $raw . PHP_EOL . PHP_EOL,
+    FILE_APPEND
+);
+
+$input = json_decode($raw, true);
+
+if (!$input) {
     http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'Invalid data']);
+
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Invalid JSON'
+    ]);
+
+    exit;
 }
 
-function handleTelegramWebhook($input, $token, $admin_chat_id, $db) {
-    // Callback query (нажатие на кнопки)
-    if (isset($input['callback_query'])) {
-        handleCallback($input['callback_query'], $token, $admin_chat_id, $db);
-        return;
-    }
-    
-    if (isset($input['message'])) {
-        handleMessage($input['message'], $token, $admin_chat_id, $db);
-        return;
-    }
-}
+// ======================================
+// 1. TELEGRAM WEBHOOK
+// ======================================
 
-function handleMessage($message, $token, $admin_chat_id, $db) {
+if (isset($input['message'])) {
+
+    $message = $input['message'];
+
     $chat_id = $message['chat']['id'];
-    $text = $message['text'] ?? '';
+    $text = trim($message['text'] ?? '');
+
     $username = $message['from']['username'] ?? '';
     $first_name = $message['from']['first_name'] ?? '';
-    
+
+    // =========================
+    // /start
+    // =========================
+
     if ($text === '/start') {
-        subscribeUser($db, $chat_id, $username, $first_name);
-        
-        if ($chat_id == $admin_chat_id) {
-            sendTelegramMessage($token, $chat_id, 
-                "👋 <b>Добро пожаловать, Админ!</b>\n\n" .
-                "Я бот салона маникюра PickMeNails 💅\n\n" .
-                "Выберите действие:",
-                'HTML', getAdminKeyboard());
-        } else {
-            sendTelegramMessage($token, $chat_id, 
-                "👋 <b>Добро пожаловать в PickMeNails!</b>\n\n" .
-                "Вы подписаны на наши новости и акции 🎉\n\n" .
-                "Мы публикуем:\n" .
-                "• Акции и скидки 💰\n" .
-                "• Новые работы мастеров 💅\n" .
-                "• Полезные советы по уходу 📚\n\n" .
-                "Чтобы отписаться, нажмите /unsubscribe",
-                'HTML', getUserKeyboard());
-        }
-        return;
-    }
 
-    if ($text === '/stats' && $chat_id == $admin_chat_id) {
-        $count = getSubscribersCount($db);
-        sendTelegramMessage($token, $chat_id, 
-            "📊 <b>Статистика бота:</b>\n\n" .
-            "👥 Подписчиков: <b>$count</b>\n" .
-            "📅 Сегодня: " . date('d.m.Y H:i'),
-            'HTML');
-        return;
-    }
-    
-    if ($text === '/subscribers' && $chat_id == $admin_chat_id) {
-        $subs = getSubscribersList($db, 10);
-        $count = getSubscribersCount($db);
-        
-        $message = "👥 <b>Подписчики (всего: $count)</b>\n\n";
-        foreach ($subs as $sub) {
-            $user = $sub['username'] ? "@{$sub['username']}" : $sub['first_name'];
-            $message .= "• $user\n";
-        }
-        
-        sendTelegramMessage($token, $chat_id, $message, 'HTML');
-        return;
-    }
-    
-    if ($text === '/broadcast' && $chat_id == $admin_chat_id) {
-        sendTelegramMessage($token, $chat_id, 
-            "📢 <b>Рассылка подписчикам</b>\n\n" .
-            "Отправьте сообщение, которое нужно разослать всем подписчикам.\n\n" .
-            "⚠️ <b>Внимание:</b> Сообщение будет отправлено всем!",
-            'HTML', [
-                'inline_keyboard' => [
-                    [['text' => '❌ Отмена', 'callback_data' => 'cancel_broadcast']]
+        if ((string)$chat_id === (string)$admin_chat_id) {
+
+            sendTelegramMessage(
+                $bot_token,
+                $chat_id,
+                "👋 <b>Админ-панель PickMeNails</b>\n\nВыберите действие:",
+                [
+                    'inline_keyboard' => [
+                        [
+                            [
+                                'text' => '📊 Статистика',
+                                'callback_data' => 'stats'
+                            ]
+                        ],
+                        [
+                            [
+                                'text' => '👥 Подписчики',
+                                'callback_data' => 'subs'
+                            ]
+                        ]
+                    ]
                 ]
-            ]);
-        return;
+            );
+
+        } else {
+
+            sendTelegramMessage(
+                $bot_token,
+                $chat_id,
+                "👋 Добро пожаловать в PickMeNails 💅\n\nСпасибо за подписку!"
+            );
+        }
+
+        echo json_encode(['status' => 'ok']);
+        exit;
     }
-    
-    if ($text === '/unsubscribe') {
-        unsubscribeUser($db, $chat_id);
-        sendTelegramMessage($token, $chat_id, 
-            "🔕 Вы отписаны от рассылки.\n\n" .
-            "Чтобы подписаться снова, нажмите /start",
-            'HTML');
-        return;
+
+    // =========================
+    // /stats
+    // =========================
+
+    if (
+        $text === '/stats' &&
+        (string)$chat_id === (string)$admin_chat_id
+    ) {
+
+        sendTelegramMessage(
+            $bot_token,
+            $chat_id,
+            "📊 Бот работает нормально"
+        );
+
+        echo json_encode(['status' => 'ok']);
+        exit;
     }
-    
-    if ($chat_id != $admin_chat_id) {
-        sendTelegramMessage($token, $chat_id, 
-            "Спасибо за сообщение! 🙏\n" .
-            "Мастер скоро ответит вам в личном чате.",
-            'HTML');
-        // Пересылаем админу
-        sendTelegramMessage($token, $admin_chat_id, 
-            "📩 <b>Сообщение от пользователя</b>\n\n" .
-            "👤: @{$username}\n" .
-            "💬: {$text}",
-            'HTML');
-        return;
-    }
+
+    // =========================
+    // ОБЫЧНЫЕ СООБЩЕНИЯ
+    // =========================
+
+    sendTelegramMessage(
+        $bot_token,
+        $chat_id,
+        "✅ Получено сообщение:\n\n$text"
+    );
+
+    echo json_encode(['status' => 'ok']);
+    exit;
 }
 
-function handleCallback($callback, $token, $admin_chat_id, $db) {
+// ======================================
+// 2. CALLBACK КНОПКИ
+// ======================================
+
+if (isset($input['callback_query'])) {
+
+    $callback = $input['callback_query'];
+
     $chat_id = $callback['message']['chat']['id'];
-    $message_id = $callback['message']['message_id'];
+    $callback_id = $callback['id'];
     $data = $callback['data'];
-    
-    if ($chat_id != $admin_chat_id) {
-        answerCallback($token, $callback['id'], '❌ Доступ запрещён');
-        return;
+
+    if ((string)$chat_id !== (string)$admin_chat_id) {
+
+        answerCallback(
+            $bot_token,
+            $callback_id,
+            'Нет доступа'
+        );
+
+        exit;
     }
-    
-    switch ($data) {
-        case 'admin_broadcast':
-            sendTelegramMessage($token, $chat_id, 
-                "📢 <b>Рассылка подписчикам</b>\n\n" .
-                "Отправьте сообщение для рассылки:",
-                'HTML');
-            answerCallback($token, $callback['id']);
-            break;
-            
-        case 'admin_subscribers':
-            $count = getSubscribersCount($db);
-            $subs = getSubscribersList($db, 10);
-            $message = "👥 <b>Подписчики: $count</b>\n\n";
-            foreach ($subs as $sub) {
-                $user = $sub['username'] ? "@{$sub['username']}" : $sub['first_name'];
-                $message .= "• $user\n";
-            }
-            sendTelegramMessage($token, $chat_id, $message, 'HTML');
-            answerCallback($token, $callback['id']);
-            break;
-            
-        case 'admin_stats':
-            $count = getSubscribersCount($db);
-            sendTelegramMessage($token, $chat_id, 
-                "📊 <b>Статистика:</b>\n\n" .
-                "👥 Подписчиков: <b>$count</b>\n" .
-                "📅 Дата: " . date('d.m.Y H:i'),
-                'HTML');
-            answerCallback($token, $callback['id']);
-            break;
-            
-        case 'cancel_broadcast':
-            sendTelegramMessage($token, $chat_id, "❌ Рассылка отменена");
-            answerCallback($token, $callback['id'], 'Отменено');
-            break;
-            
-        default:
-            answerCallback($token, $callback['id']);
+
+    if ($data === 'stats') {
+
+        sendTelegramMessage(
+            $bot_token,
+            $chat_id,
+            "📊 Статистика:\n\n✅ Бот активен"
+        );
     }
+
+    if ($data === 'subs') {
+
+        sendTelegramMessage(
+            $bot_token,
+            $chat_id,
+            "👥 Подписчики:\n\nПока SQLite отключён"
+        );
+    }
+
+    answerCallback($bot_token, $callback_id);
+
+    echo json_encode(['status' => 'ok']);
+    exit;
 }
 
+// ======================================
+// 3. ЗАПРОСЫ С САЙТА
+// ======================================
 
-function sendTelegramMessage($token, $chat_id, $text, $parse_mode = 'HTML', $reply_markup = null) {
-    $url = "https://api.telegram.org/bot$token/sendMessage";
-    $data = ['chat_id' => $chat_id, 'text' => $text, 'parse_mode' => $parse_mode];
-    if ($reply_markup) $data['reply_markup'] = json_encode($reply_markup);
-    
+// Вопрос с формы
+if (
+    isset($input['phone']) &&
+    isset($input['question'])
+) {
+
+    $phone = htmlspecialchars($input['phone']);
+    $question = htmlspecialchars($input['question']);
+
+    $tg = htmlspecialchars(
+        ltrim($input['tg_username'] ?? '', '@')
+    );
+
+    $message =
+        "📩 <b>Новый вопрос с сайта</b>\n\n" .
+        "📞 Телефон: $phone\n" .
+        "✈️ Telegram: @$tg\n\n" .
+        "❓ Вопрос:\n$question";
+
+    sendTelegramMessage(
+        $bot_token,
+        $admin_chat_id,
+        $message
+    );
+
+    echo json_encode([
+        'status' => 'success'
+    ]);
+
+    exit;
+}
+
+// Отзыв
+if (
+    isset($input['name']) &&
+    isset($input['text']) &&
+    isset($input['rating'])
+) {
+
+    $name = htmlspecialchars($input['name']);
+    $text = htmlspecialchars($input['text']);
+
+    $rating = intval($input['rating']);
+
+    $stars =
+        str_repeat('⭐', $rating);
+
+    $message =
+        "📝 <b>Новый отзыв</b>\n\n" .
+        "👤 Имя: $name\n" .
+        "⭐ Оценка: $stars\n\n" .
+        "💬 Отзыв:\n$text";
+
+    sendTelegramMessage(
+        $bot_token,
+        $admin_chat_id,
+        $message
+    );
+
+    echo json_encode([
+        'status' => 'success'
+    ]);
+
+    exit;
+}
+
+// ======================================
+// НЕИЗВЕСТНЫЙ ЗАПРОС
+// ======================================
+
+http_response_code(400);
+
+echo json_encode([
+    'status' => 'error',
+    'message' => 'Unknown request'
+]);
+
+// ======================================
+// ФУНКЦИИ
+// ======================================
+
+function sendTelegramMessage(
+    $token,
+    $chat_id,
+    $text,
+    $reply_markup = null
+) {
+
+    $url =
+        "https://api.telegram.org/bot$token/sendMessage";
+
+    $data = [
+        'chat_id' => $chat_id,
+        'text' => $text,
+        'parse_mode' => 'HTML'
+    ];
+
+    if ($reply_markup) {
+        $data['reply_markup'] =
+            json_encode($reply_markup);
+    }
+
     $ch = curl_init($url);
+
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+
+    curl_setopt(
+        $ch,
+        CURLOPT_POSTFIELDS,
+        http_build_query($data)
+    );
+
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
     $result = curl_exec($ch);
+
+    file_put_contents(
+        __DIR__ . '/telegram-send.log',
+        $result . PHP_EOL,
+        FILE_APPEND
+    );
+
     curl_close($ch);
+
     return $result;
 }
 
-function answerCallback($token, $callback_id, $text = '') {
-    $url = "https://api.telegram.org/bot$token/answerCallbackQuery";
+function answerCallback(
+    $token,
+    $callback_id,
+    $text = ''
+) {
+
+    $url =
+        "https://api.telegram.org/bot$token/answerCallbackQuery";
+
+    $data = [
+        'callback_query_id' => $callback_id,
+        'text' => $text
+    ];
+
     $ch = curl_init($url);
+
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['callback_query_id' => $callback_id, 'text' => $text]));
+
+    curl_setopt(
+        $ch,
+        CURLOPT_POSTFIELDS,
+        http_build_query($data)
+    );
+
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
     curl_exec($ch);
+
     curl_close($ch);
 }
 
-function getAdminKeyboard() {
-    return [
-        'inline_keyboard' => [
-            [['text' => '📢 Сделать рассылку', 'callback_data' => 'admin_broadcast']],
-            [['text' => '👥 Подписчики', 'callback_data' => 'admin_subscribers'], 
-             ['text' => '📊 Статистика', 'callback_data' => 'admin_stats']]
-        ]
-    ];
-}
-
-function getUserKeyboard() {
-    return [
-        'inline_keyboard' => [
-            [['text' => '🔕 Отписаться', 'callback_data' => 'unsubscribe']]
-        ]
-    ];
-}
-
-function subscribeUser($db, $chat_id, $username, $first_name) {
-    try {
-        $stmt = $db->prepare("INSERT OR IGNORE INTO subscribers (chat_id, username, first_name) VALUES (?, ?, ?)");
-        $stmt->execute([$chat_id, $username, $first_name]);
-    } catch (PDOException $e) {
-        error_log('Subscribe error: ' . $e->getMessage());
-    }
-}
-
-function unsubscribeUser($db, $chat_id) {
-    try {
-        $stmt = $db->prepare("DELETE FROM subscribers WHERE chat_id = ?");
-        $stmt->execute([$chat_id]);
-    } catch (PDOException $e) {
-        error_log('Unsubscribe error: ' . $e->getMessage());
-    }
-}
-
-function getSubscribersCount($db) {
-    $stmt = $db->query("SELECT COUNT(*) FROM subscribers");
-    return $stmt->fetchColumn();
-}
-
-function getSubscribersList($db, $limit = 10) {
-    $stmt = $db->prepare("SELECT * FROM subscribers ORDER BY subscribed_at DESC LIMIT ?");
-    $stmt->execute([$limit]);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
-?>
