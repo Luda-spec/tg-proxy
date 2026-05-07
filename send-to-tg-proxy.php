@@ -1,10 +1,5 @@
 <?php
-/**
- * Telegram Bot Proxy Server
- * v2.0 - Форма + Отзывы
- */
 
-// === CORS для Render ===
 $allowed_origin = 'https://manicure.ct.ws';
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
@@ -15,13 +10,11 @@ if ($origin === $allowed_origin) {
     header('Access-Control-Max-Age: 86400');
 }
 
-// Preflight request (OPTIONS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
 }
 
-// Только POST
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['status' => 'error', 'message' => 'Only POST allowed']);
@@ -30,15 +23,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 header('Content-Type: application/json');
 
-// Получаем данные
 $input = json_decode(file_get_contents('php://input'), true);
 
-// === НАСТРОЙКИ БОТА ===
 $token = "8517119171:AAHibMpoU5NPMRgOCkH9holkHIs0oZwMats";
 $chat_id = "1089091335";
 
-// === ТИП 1: ФОРМА ОБРАТНОЙ СВЯЗИ (ваш рабочий код) ===
-// Проверяем по наличию полей формы (без type — для обратной совместимости)
 if (isset($input['phone']) && isset($input['tg_username']) && isset($input['question'])) {
     
     $phone = $input['phone'];
@@ -61,12 +50,11 @@ if (isset($input['phone']) && isset($input['tg_username']) && isset($input['ques
     exit;
 }
 
-// === ТИП 2: НОВЫЙ ОТЗЫВ (по полю type) ===
-if (isset($input['type']) && $input['type'] === 'review') {
+if (isset($input['name']) && isset($input['text']) && isset($input['rating'])) {
     
-    $name = $input['name'] ?? '';
-    $rating = intval($input['rating'] ?? 5);
-    $text = $input['text'] ?? '';
+    $name = $input['name'];
+    $rating = intval($input['rating']);
+    $text = $input['text'];
     $admin_url = $input['admin_url'] ?? '';
     
     if (!$name || !$text) {
@@ -75,7 +63,6 @@ if (isset($input['type']) && $input['type'] === 'review') {
         exit;
     }
     
-    // Звёзды
     $stars = str_repeat('★', $rating) . str_repeat('☆', 5 - $rating);
     
     $message = "📝 <b>Новый отзыв на сайте!</b>\n\n";
@@ -89,11 +76,9 @@ if (isset($input['type']) && $input['type'] === 'review') {
     exit;
 }
 
-// Если ничего не подошло
 http_response_code(400);
 echo json_encode(['status' => 'error', 'message' => 'Неизвестный тип запроса']);
 
-// === ФУНКЦИЯ ОТПРАВКИ ===
 function sendTelegramMessage($token, $chat_id, $message) {
     $url = "https://api.telegram.org/bot$token/sendMessage";
     
