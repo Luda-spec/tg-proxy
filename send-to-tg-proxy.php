@@ -1,170 +1,102 @@
-```php id="h5xghn"
 <?php
 
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
+$allowed_origin = 'https://manicure.ct.ws';
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+
+if ($origin === $allowed_origin) {
+    header("Access-Control-Allow-Origin: $allowed_origin");
+    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type');
+    header('Access-Control-Max-Age: 86400');
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['status' => 'error', 'message' => 'Only POST allowed']);
+    exit;
+}
 
 header('Content-Type: application/json');
 
-$bot_token = 'ТВОЙ_ТОКЕН';
-$admin_chat_id = '1089091335';
+$input = json_decode(file_get_contents('php://input'), true);
 
-// ======================================
-// ЧИТАЕМ RAW JSON
-// ======================================
+$token = "8517119171:AAHibMpoU5NPMRgOCkH9holkHIs0oZwMats";
+$chat_id = "1089091335";
 
-$raw = file_get_contents('php://input');
-
-file_put_contents(
-    __DIR__ . '/debug.log',
-    $raw . PHP_EOL . PHP_EOL,
-    FILE_APPEND
-);
-
-$input = json_decode($raw, true);
-
-// ======================================
-// TELEGRAM WEBHOOK — ПЕРВЫМ!
-// ======================================
-
-if (isset($input['message'])) {
-
-    $chat_id = $input['message']['chat']['id'];
-
-    $text = $input['message']['text'] ?? '';
-
-    // /start
-    if ($text === '/start') {
-
-        sendTelegramMessage(
-            $bot_token,
-            $chat_id,
-            "✅ Бот работает!\n\n/start получен"
-        );
-
+if (isset($input['phone']) && isset($input['tg_username']) && isset($input['question'])) {
+    
+    $phone = $input['phone'];
+    $tg_username = ltrim($input['tg_username'], '@');
+    $question = $input['question'];
+    
+    if (!$phone || !$tg_username || !$question) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Заполните все поля']);
         exit;
     }
-
-    // обычные сообщения
-    sendTelegramMessage(
-        $bot_token,
-        $chat_id,
-        "Получено: $text"
-    );
-
+    
+    $message = "📩 <b>Новый вопрос с сайта PickMeNails</b>\n\n";
+    $message .= "📞 <b>Телефон:</b> $phone\n";
+    $message .= "✈️ <b>Telegram:</b> @$tg_username\n";
+    $message .= "❓ <b>Вопрос:</b>\n$question";
+    
+    sendTelegramMessage($token, $chat_id, $message);
+    echo json_encode(['status' => 'success', 'message' => 'Отправлено!']);
     exit;
 }
 
-// ======================================
-// CALLBACK BUTTONS
-// ======================================
-
-if (isset($input['callback_query'])) {
-
-    $callback = $input['callback_query'];
-
-    $chat_id = $callback['message']['chat']['id'];
-
-    sendTelegramMessage(
-        $bot_token,
-        $chat_id,
-        "Нажата кнопка"
-    );
-
-    exit;
-}
-
-// ======================================
-// ФОРМА САЙТА
-// ======================================
-
-if (
-    isset($input['phone']) &&
-    isset($input['question'])
-) {
-
-    $phone = $input['phone'];
-    $question = $input['question'];
-
-    sendTelegramMessage(
-        $bot_token,
-        $admin_chat_id,
-        "📩 Новый вопрос\n\nТелефон: $phone\n\nВопрос:\n$question"
-    );
-
-    echo json_encode(['status' => 'success']);
-
-    exit;
-}
-
-// ======================================
-// ОТЗЫВЫ
-// ======================================
-
-if (
-    isset($input['name']) &&
-    isset($input['text'])
-) {
-
+if (isset($input['name']) && isset($input['text']) && isset($input['rating'])) {
+    
     $name = $input['name'];
+    $rating = intval($input['rating']);
     $text = $input['text'];
-
-    sendTelegramMessage(
-        $bot_token,
-        $admin_chat_id,
-        "📝 Новый отзыв\n\n$name\n\n$text"
-    );
-
-    echo json_encode(['status' => 'success']);
-
+    $admin_url = $input['admin_url'] ?? '';
+    
+    if (!$name || !$text) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Имя и текст обязательны']);
+        exit;
+    }
+    
+    $stars = str_repeat('★', $rating) . str_repeat('☆', 5 - $rating);
+    
+    $message = "📝 <b>Новый отзыв на сайте!</b>\n\n";
+    $message .= "👤 <b>Имя:</b> $name\n";
+    $message .= "⭐ <b>Оценка:</b> $rating/5 $stars\n";
+    $message .= "💬 <b>Текст:</b>\n$text\n\n";
+    $message .= "🔗 <a href=\"$admin_url\">Проверить в админке</a>";
+    
+    sendTelegramMessage($token, $chat_id, $message);
+    echo json_encode(['status' => 'success', 'message' => 'Отправлено!']);
     exit;
 }
 
-// ======================================
-// DEFAULT
-// ======================================
+http_response_code(400);
+echo json_encode(['status' => 'error', 'message' => 'Неизвестный тип запроса']);
 
-echo json_encode([
-    'status' => 'ok'
-]);
-
-// ======================================
-// SEND MESSAGE
-// ======================================
-
-function sendTelegramMessage(
-    $token,
-    $chat_id,
-    $text
-) {
-
+function sendTelegramMessage($token, $chat_id, $message) {
     $url = "https://api.telegram.org/bot$token/sendMessage";
-
+    
     $data = [
         'chat_id' => $chat_id,
-        'text' => $text
+        'text' => $message,
+        'parse_mode' => 'HTML'
     ];
-
+    
     $ch = curl_init($url);
-
     curl_setopt($ch, CURLOPT_POST, true);
-
-    curl_setopt(
-        $ch,
-        CURLOPT_POSTFIELDS,
-        http_build_query($data)
-    );
-
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    
     $result = curl_exec($ch);
-
-    file_put_contents(
-        __DIR__ . '/send-log.txt',
-        $result . PHP_EOL,
-        FILE_APPEND
-    );
-
     curl_close($ch);
+    
+    return $result;
 }
-```
+?>
