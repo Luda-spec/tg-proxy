@@ -1,6 +1,6 @@
 <?php
 
-$allowed_origin = 'https://manicure.ct.ws';
+$allowed_origin = 'https://manicuree.gt.tc';
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
 if ($origin === $allowed_origin) {
